@@ -34,7 +34,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define BOUNCE_DELAY_MS 200
+#define BOUNCE_DELAY_MS 75
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -51,10 +51,24 @@ UART_HandleTypeDef huart2;
 uint16_t pressed;
 uint16_t button_exti_count = 0;
 uint16_t button_debounced_count = 0;
-uint16_t last_flank_causing_exti;
-uint16_t last_managed_exti;
+uint16_t last_flank_causing_exti = 0;
+uint16_t last_managed_exti = -1;
 uint8_t unhandled_exti = 0;
 uint16_t flick = 0;
+
+uint8_t counter = 0;
+int runClock = 0;
+//Seconds
+int secondsFirst = 0;
+int secondsSecond = 0;
+//Minutes
+int minutesFirst = 0;
+int minutesSecond = 0;
+//Hours
+int hoursFirst = 0;
+int hoursSecond = 0;
+
+int showHoursMinutes = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -75,28 +89,22 @@ int is_there_unhandled_exti(void)
 	return 0;
 }
 
-
 int has_enough_time_passed(uint32_t delay_ms)
 {
 	uint32_t now = HAL_GetTick();
-	return (now - last_flank_causing_exti >= delay_ms);
+	return (now - last_managed_exti >= delay_ms);
 }
 
-int read_button(void)
+GPIO_PinState read_button(void) {
+	return HAL_GPIO_ReadPin(BTN_GPIO_Port, BTN_Pin);
+}
+
+void handle_button()
 {
-	return HAL_GPIO_ReadPin(BTN_GPIO_Port, BTN_Pin) == GPIO_PIN_RESET;
+	qs_put_big_num(button_debounced_count);
 }
 
-void handle_button(int pressed)
-{
-	if (pressed) {
-		qs_put_big_num(button_debounced_count);
-	}
-}
-
-
-
-int uart_get_menu_choice()
+int  uart_get_menu_choice()
 {
 	char str[1] = { '\0' };
 	uint16_t str_len = 1;
@@ -126,18 +134,6 @@ int flicker() {
 		return 0;
 	}
 }
-uint8_t counter = 0;
-//Seconds
-int secondsFirst = 0;
-int secondsSecond = 0;
-//Minutes
-int minutesFirst = 0;
-int minutesSecond = 0;
-//Hours
-int hoursFirst = 0;
-int hoursSecond = 0;
-
-int showHoursMinutes = 0;
 
 void testClock(){
 	//Seconds
@@ -165,7 +161,7 @@ void resetClock(){
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-	if(htim == &htim11)
+	if(htim == &htim11 && runClock)
 	{
 		counter++;
 		if (counter == 2){
@@ -207,24 +203,15 @@ void clock_mode(){
 	/*** init segment ***/
 	HAL_TIM_Base_Init(&htim11);
 	HAL_TIM_Base_Start_IT( &htim11 );
+	runClock = 1;
 	/*** main loop ***/
 	while (1)
 	{
-
 		if (HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) == GPIO_PIN_SET)
 			showHoursMinutes = 0;
 		else
 			showHoursMinutes = 1;
-		{
-			switch (uart_get_menu_choice()){
-			case 1: Transmit("Press 3 to retun to menu.\r\n"); break;
-			case 2: Transmit("Press 3 to retun to menu.\r\n"); break;
-			case 3: return; break;
-			default: uart_print_bad_choice(); break;
-			}
-		}
 	}
-
 }
 
 void button_mode(){
@@ -233,18 +220,16 @@ void button_mode(){
 	/*** main loop ***/
 	while (1)
 	{
-		if (last_flank_causing_exti != last_managed_exti){
+		if ((last_flank_causing_exti != last_managed_exti)) {
 			if (is_there_unhandled_exti()) {
 				unhandled_exti = 0;
-				last_managed_exti = HAL_GetTick();
+				last_managed_exti = last_flank_causing_exti;
 				button_debounced_count++;
-				int b = read_button();
-				handle_button(b);
+				handle_button();
 			}
 		}
 	}
 }
-
 
 /* USER CODE END 0 */
 
@@ -279,13 +264,14 @@ int main(void)
 	MX_USART2_UART_Init();
 	MX_TIM11_Init();
 	/* USER CODE BEGIN 2 */
+	Transmit("===============================================\r\n");
+	handle_button();
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
 	while (1)
 	{
-
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
@@ -482,8 +468,8 @@ void HAL_GPIO_EXTI_Callback( uint16_t GPIO_Pin ){
 
 	if (GPIO_Pin == BTN_Pin) {
 		button_exti_count++;
+		last_flank_causing_exti = HAL_GetTick();
 		if (has_enough_time_passed(BOUNCE_DELAY_MS)){
-			last_flank_causing_exti = HAL_GetTick();
 			unhandled_exti = 1;
 		}
 	}
